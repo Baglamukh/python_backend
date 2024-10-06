@@ -1,0 +1,25 @@
+
+<button id="speak-btn">Speak Now</button>
+
+<div id="popup-box" style="display: none;">
+  <p id="popup-text">Hello, how are you today?मेरा दोस्त खराब है।</p>
+  <button id="ok-btn">OK</button>
+</div>
+<script>
+const speakBtn = document.getElementById('speak-btn');
+const popupBox = document.getElementById('popup-box');
+const okBtn = document.getElementById('ok-btn');
+const popupText = document.getElementById('popup-text');
+
+speakBtn.addEventListener('click', () => {
+  popupBox.style.display = 'block';
+});
+
+okBtn.addEventListener('click', () => {
+  popupBox.style.display = 'none';
+  responsiveVoice.speak(popupText.textContent);
+});
+
+// Responsive Voice API
+responsiveVoice.setDefaultVoice("UK English Male");
+</script>

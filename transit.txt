@@ -1,0 +1,62 @@
+def calcTransit(d, p, P, v, B, date_time, lat, lon, timeZ):
+    # d: date
+    # p: planet number (0 to 9, 8 for ascendant)
+    # P: required position in degrees (0 to 360)
+    # B: before or after (-1 or 1)
+    
+    if d is None:
+        d = datetime.strptime(date_time, "%Y-%m-%d %H:%M:%S")
+    
+    f1 = datetime.now()
+    D = d.toordinal()
+    J = m2j(d) + timeZ / 1440
+    cpp = 0
+    Imax = 160000
+    g = ['Sun', 'Moon', 'Mars', 'Mercury', 'Jupiter', 'Venus', 'Saturn', 'Rahu', 'Lagna', 'Ketu']
+    g22 = [4, 15, 4, 4, 2, 4, 1, 1.5, 1000, 1.5]
+    gfix = [1, 24, 1440, 86400]
+
+    for i in range(Imax):
+        A = calculateAscendant(d, lat, lon)
+        
+        if p == 7:
+            G = (A['node'] + 360) % 360
+            Digg = (360 + round(G, v) - round(P, v)) % 360
+        else:
+            grahas = getGrahas(J, lat, lon)
+            G = grahas['grahas'][p] + A['Ayanamsa']
+            Digg = round(G, v) - round(P, v)
+        
+        if abs(Digg) < 0.5 and cpp < 200:
+            J += B
+            d = jd2md3(J)
+            continue
+        
+        if abs(Digg) > g22[p]:
+            Dig = gfix[0]
+        elif abs(Digg) > g22[p] / 3:
+            Dig = gfix[1]
+        elif abs(Digg) > g22[p] / 9:
+            Dig = gfix[2]
+        else:
+            Dig = gfix[3]
+        
+        if p in [7, 9]:
+            if round(G, v) == round(P, v):
+                break
+            else:
+                J += B / Dig
+                d = jd2md3(J)
+        else:
+            if round(G, v) == round(P, v):
+                break
+            else:
+                J += B / Dig
+                d = jd2md3(J)
+        
+        cpp += 1
+    
+    if jd2md3(J) == 'TransitDate':
+        return calcTransit(jd2md3(J + B * 20), p, P, v, B, date_time, lat, lon, timeZ)
+    
+    print(f'Transit of {g[p]} {"before" if B == -1 else "after"} {D} is {jd2md3(J)} at this position {G} \nIteration Count: {cpp} \nTime taken in milliseconds: {datetime.now() - f1}')

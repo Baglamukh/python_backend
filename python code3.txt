@@ -1,0 +1,606 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+from datetime import datetime
+import math
+from math import floor
+
+app = Flask(__name__)
+CORS(app)
+
+# Constants
+DEG2RAD = math.pi / 180.0
+RAD2DEG = 180.0 / math.pi
+
+# Utility functions
+def rev(angle):
+    return angle - math.floor(angle / 360.0) * 360.0  # 0 <= a < 360
+
+def rev2(angle):
+    a = rev(angle)
+    return a - 360.0 if a >= 180 else a  # -180 <= a < 180
+
+def sind(angle):
+    return math.sin(angle * DEG2RAD)
+
+def cosd(angle):
+    return math.cos(angle * DEG2RAD)
+
+def tand(angle):
+    return math.tan(angle * DEG2RAD)
+
+def asind(value):
+    return RAD2DEG * math.asin(value)
+
+def acosd(value):
+    return RAD2DEG * math.acos(value)
+
+def atand(value):
+    return RAD2DEG * math.atan(value)
+
+def atan2d(y, x):
+    return RAD2DEG * math.atan2(y, x)
+
+def log10(x):
+    return math.log10(x)
+
+def sqr(x):
+    return x * x
+
+def cbrt(x):
+    return x ** (1/3.0)
+
+def SGN(x):
+    return -1 if x < 0 else 1
+
+def sunxyz(jday):
+    d = jday - 2451543.5
+    w = 282.9404 + 4.70935E-5 * d
+    e = 0.016709 - 1.151E-9 * d
+    M = rev(356.0470 + 0.9856002585 * d)
+    E = M + e * RAD2DEG * sind(M) * (1.0 + e * cosd(M))
+    xv = cosd(E) - e
+    yv = math.sqrt(1.0 - e * e) * sind(E)
+    v = atan2d(yv, xv)
+    r = math.sqrt(xv * xv + yv * yv)
+    lonsun = rev(v + w)
+    xs = r * cosd(lonsun)
+    ys = r * sind(lonsun)
+    return [xs, ys, 0, r, lonsun, 0]
+
+def radec2aa(ra, dec, jday, obs):
+    TH0 = 280.46061837 + 360.98564736629 * (jday - 2451545.0)
+    H = rev(TH0 - obs['longitude'] - ra)
+    alt = asind(sind(obs['latitude']) * sind(dec) + cosd(obs['latitude']) * cosd(dec) * cosd(H))
+    az = atan2d(sind(H), (cosd(H) * sind(obs['latitude']) - tand(dec) * cosd(obs['latitude'])))
+    return [alt, rev(az + 180.0), H]
+
+def SunAlt(jday, obs):
+    sdat = sunxyz(jday)
+    ecl = 23.4393 - 3.563E-7 * (jday - 2451543.5)
+    xe = sdat[0]
+    ye = sdat[1] * cosd(ecl)
+    ze = sdat[1] * sind(ecl)
+    ra = rev(atan2d(ye, xe))
+    dec = atan2d(ze, math.sqrt(xe * xe + ye * ye))
+    topo = radec2aa(ra, dec, jday, obs)
+    return [topo[0], topo[1], topo[2], ra, dec, sdat[4], 0, 1, 0, sdat[3], -26.74]
+
+
+def MoonPos(jday, obs):
+    T = (jday - 2451545.0) / 36525
+    LP = rev(218.3164477 + 481267.88123421 * T)
+    D = rev(297.8501921 + 445267.1114034 * T)
+    M = rev(357.5291092 + 35999.0502909 * T)
+    MP = rev(134.9633964 + 477198.8675055 * T)
+    F = rev(93.2720950 + 483202.0175233 * T)
+    
+    Sl = (6288774 * sind(MP) + 1274027 * sind(2 * D - MP) + 658314 * sind(2 * D) +
+          213618 * sind(2 * MP) - 185116 * sind(M) - 114332 * sind(2 * F) +
+          58793 * sind(2 * D - 2 * MP) + 57066 * sind(2 * D - M - MP) +
+          53322 * sind(2 * D + MP) + 45758 * sind(2 * D - M) -
+          40923 * sind(M - MP) - 34720 * sind(D) - 30383 * sind(M + MP) +
+          15327 * sind(2 * D - 2 * F) - 12528 * sind(MP + 2 * F) +
+          10980 * sind(MP - 2 * F) + 10675 * sind(4 * D - MP) +
+          10034 * sind(3 * MP) + 8548 * sind(4 * D - 2 * MP) -
+          7888 * sind(2 * D + M - MP) - 6766 * sind(2 * D + M) -
+          5163 * sind(D - MP) + 4987 * sind(D + M) + 4036 * sind(2 * D - M + MP))
+    
+    Sb = (5128122 * sind(F) + 280602 * sind(MP + F) + 277602 * sind(MP - F) +
+          173237 * sind(2 * D - F) + 55413 * sind(2 * D - MP + F) +
+          46271 * sind(2 * D - MP - F) + 32573 * sind(2 * D + F) +
+          17198 * sind(2 * MP + F) + 9266 * sind(2 * D + MP - F) +
+          8822 * sind(2 * MP - F) + 8216 * sind(2 * D - M - F) +
+          4324 * sind(2 * D - 2 * MP - F) + 4200 * sind(2 * D + MP + F))
+    
+    Sr = ((-20905355) * cosd(MP) - 3699111 * cosd(2 * D - MP) -
+          2955968 * cosd(2 * D) - 569925 * cosd(2 * MP) +
+          246158 * cosd(2 * D - 2 * MP) - 152138 * cosd(2 * D - M - MP) -
+          170733 * cosd(2 * D + MP) - 204586 * cosd(2 * D - M) -
+          129620 * cosd(M - MP) + 108743 * cosd(D) + 104755 * cosd(M + MP) +
+          79661 * cosd(MP - 2 * F) + 48888 * cosd(M))
+    
+    mglong = rev(LP + Sl / 1000000.0)
+    mglat = Sb / 1000000.0
+    obl = 23.4393 - 3.563E-7 * (jday - 2451543.5)
+    ra = rev(atan2d(sind(mglong) * cosd(obl) - tand(mglat) * sind(obl), cosd(mglong)))
+    dec = asind(sind(mglat) * cosd(obl) + cosd(mglat) * sind(obl) * sind(mglong))
+    moondat = radec2aa(ra, dec, jday, obs)
+    pa = abs(180.0 - D - 6.289 * sind(MP) + 2.100 * sind(M) - 1.274 * sind(2 * D - MP) -
+             0.658 * sind(2 * D) - 0.214 * sind(2 * MP) - 0.11 * sind(D))
+    k = (1 + cosd(pa)) / 2
+    mr = round(385000.56 + Sr / 1000.0)
+    h = moondat[0]
+    h -= asind(6378.14 / mr) * cosd(h)
+    sdat = sunxyz(jday)
+    r = sdat[3]
+    R = mr / 149598000
+    mag = 0.23 + 5 * log10(r * R) + 0.026 * pa + 4.0E-9 * pa * pa * pa * pa
+    return [h, moondat[1], moondat[2], ra, dec, mglong, mglat, k, mag, mr, -12.7]
+
+def to_julian_date(dt):
+    year = dt.year
+    month = dt.month
+    day = dt.day + (dt.hour + dt.minute / 60.0 + dt.second / 3600.0) / 24.0
+
+    if month <= 2:
+        year -= 1
+        month += 12
+
+    A = math.floor(year / 100)
+    B = 2 - A + math.floor(A / 4)
+    C = math.floor(365.25 * year)
+    D = math.floor(30.6001 * (month + 1))
+
+    jd = B + C + D + day + 1720994.5
+    return jd
+
+# Constants
+GREGORIAN_EPOCH = 1721425.5
+d2r = math.pi / 180
+r2d = 180 / math.pi
+
+# Constants
+MERCURY = 3
+VENUS = 5
+EARTH = 2
+MARS = 2
+JUPITER = 4
+SATURN = 6
+SUN = 0
+MOON = 1
+
+class Planet:
+    def __init__(self, name, num, N, i, w, a, e, M):
+        self.name = name
+        self.num = num
+        self.N = N  # longitude of ascending node
+        self.i = i  # inclination
+        self.w = w  # argument of perihelion
+        self.a = a  # semimajor axis
+        self.e = e  # eccentricity
+        self.M = M  # mean anomaly
+
+# Initialize planets with data
+planets = [None] * 7
+planets[MERCURY] = Planet("Mercury", 0, [48.3313, 3.24587E-5], [7.0047, 5.00E-8], [29.1241, 1.01444E-5], [0.387098, 0], [0.205635, 5.59E-10], [168.6562, 4.0923344368])
+planets[VENUS] = Planet("Venus", 1, [76.6799, 2.46590E-5], [3.3946, 2.75E-8], [54.8910, 1.38374E-5], [0.723330, 0], [0.006773, -1.302E-9], [48.0052, 1.6021302244])
+planets[MARS] = Planet("Mars", 3, [49.5574, 2.11081E-5], [1.8497, -1.78E-8], [286.5016, 2.92961E-5], [1.523688, 0], [0.093405, 2.516E-9], [18.6021, 0.5240207766])
+planets[JUPITER] = Planet("Jupiter", 4, [100.4542, 2.76854E-5], [1.3030, -1.557E-7], [273.8777, 1.64505E-5], [5.20256, 0], [0.048498, 4.469E-9], [19.8950, 0.0830853001])
+planets[SATURN] = Planet("Saturn", 5, [113.6634, 2.38980E-5], [2.4886, -1.081E-7], [339.3939, 2.97661E-5], [9.55475, 0], [0.055546, -9.499E-9], [316.9670, 0.0334442282])
+
+
+# Functions for planetary positions and calculations
+def helios(p, jday):
+    d = jday - 2451543.5
+    w = p.w[0] + p.w[1] * d  # argument of perihelion
+    e = p.e[0] + p.e[1] * d
+    a = p.a[0] + p.a[1] * d
+    i = p.i[0] + p.i[1] * d
+    N = p.N[0] + p.N[1] * d
+    M = rev(p.M[0] + p.M[1] * d)  # mean anomaly
+    E0 = M + RAD2DEG * e * sind(M) * (1.0 + e * cosd(M))
+    E1 = E0 - (E0 - RAD2DEG * e * sind(E0) - M) / (1.0 - e * cosd(E0))
+    while abs(E0 - E1) > 0.0005:
+        E0 = E1
+        E1 = E0 - (E0 - RAD2DEG * e * sind(E0) - M) / (1.0 - e * cosd(E0))
+    xv = a * (cosd(E1) - e)
+    yv = a * math.sqrt(1.0 - e * e) * sind(E1)
+    v = rev(atan2d(yv, xv))  # true anomaly
+    r = math.sqrt(xv * xv + yv * yv)  # distance
+    xh = r * (cosd(N) * cosd(v + w) - sind(N) * sind(v + w) * cosd(i))
+    yh = r * (sind(N) * cosd(v + w) + cosd(N) * sind(v + w) * cosd(i))
+    zh = r * (sind(v + w) * sind(i))
+    lonecl = atan2d(yh, xh)
+    latecl = atan2d(zh, math.sqrt(xh * xh + yh * yh + zh * zh))
+
+    if p.num == JUPITER:  # Jupiter perturbations by Saturn
+        Ms = rev(planets[SATURN].M[0] + planets[SATURN].M[1] * d)
+        lonecl += (-0.332) * sind(2 * M - 5 * Ms - 67.6) - 0.056 * sind(2 * M - 2 * Ms + 21) + 0.042 * sind(3 * M - 5 * Ms + 21) - 0.036 * sind(M - 2 * Ms) + 0.022 * cosd(M - Ms) + 0.023 * sind(2 * M - 3 * Ms + 52) - 0.016 * sind(M - 5 * Ms - 69)
+        xh = r * cosd(lonecl) * cosd(latecl)  # recalc xh, yh
+        yh = r * sind(lonecl) * cosd(latecl)
+
+    if p.num == SATURN:  # Saturn perturbations
+        Mj = rev(planets[JUPITER].M[0] + planets[JUPITER].M[1] * d)
+        lonecl += 0.812 * sind(2 * Mj - 5 * M - 67.6) - 0.229 * cosd(2 * Mj - 4 * M - 2) + 0.119 * sind(Mj - 2 * M - 3) + 0.046 * sind(2 * Mj - 6 * M - 69) + 0.014 * sind(Mj - 3 * M + 32)
+        latecl += -0.020 * cosd(2 * Mj - 4 * M - 2) + 0.018 * sind(2 * Mj - 6 * M - 49)
+        xh = r * cosd(lonecl) * cosd(latecl)  # recalc xh, yh, zh
+        yh = r * sind(lonecl) * cosd(latecl)
+        zh = r * sind(latecl)
+
+    return [xh, yh, zh, r, lonecl, latecl]
+def radecr(obj, sun, jday, obs):
+    xg = obj[0] + sun[0]
+    yg = obj[1] + sun[1]
+    zg = obj[2]
+    obl = 23.4393 - 3.563E-7 * (jday - 2451543.5)
+    x1 = xg
+    y1 = yg * cosd(obl) - zg * sind(obl)
+    z1 = yg * sind(obl) + zg * cosd(obl)
+    ra = rev(atan2d(y1, x1))
+    dec = atan2d(z1, math.sqrt(x1 * x1 + y1 * y1))
+    dist = math.sqrt(x1 * x1 + y1 * y1 + z1 * z1)
+    return [ra, dec, dist]
+
+def PlanetAlt(p, jday, obs):
+    # Alt/Az, hour angle, ra/dec, ecliptic long. and lat, illuminated fraction, dist(Sun), dist(Earth), brightness of planet p
+    if p == 0:
+        return SunAlt(jday, obs)
+    if p == 1:
+        return MoonPos(jday, obs)
+    
+    sun_xyz = sunxyz(jday)
+    planet_xyz = helios(planets[p], jday)
+
+    dx = planet_xyz[0] + sun_xyz[0]
+    dy = planet_xyz[1] + sun_xyz[1]
+    dz = planet_xyz[2] + sun_xyz[2]
+    lon = rev(atan2d(dy, dx))
+    lat = atan2d(dz, math.sqrt(dx * dx + dy * dy))
+
+    radec = radecr(planet_xyz, sun_xyz, jday, obs)  # Pass 'obs' to 'radecr' if needed
+    ra = radec[0]
+    dec = radec[1]
+    altaz = radec2aa(ra, dec, jday, obs)
+
+    dist = radec[2]
+    R = sun_xyz[3]  # Sun-Earth distance
+    r = planet_xyz[3]  # heliocentric distance
+    k = ((r + dist) * (r + dist) - R * R) / (4 * r * dist)  # illuminated fraction (41.2)
+
+    # brightness calc according to Meeus p. 285-86 using Astronomical Almanac expressions
+    absbr = [-0.42, -4.40, 0, -1.52, -9.40, -8.88, -7.19, -6.87]
+    i = math.degrees(math.acos((r * r + dist * dist - R * R) / (2 * r * dist)))  # phase angle
+    mag = absbr[p] + 5 * math.log10(r * dist)  # common for all planets
+    if p == 0:
+        mag += i * (0.0380 + i * (-0.000273 + i * 0.000002))
+    elif p == 1:
+        mag += i * (0.0009 + i * (0.000239 - i * 0.00000065))
+    elif p == 3:
+        mag += i * 0.016
+    elif p == 4:
+        mag += i * 0.005
+    elif p == 5:
+        T = (jday - 2451545.0) / 36525
+        incl = 28.075216 - 0.012998 * T + 0.000004 * T * T
+        omega = 169.508470 + 1.394681 * T + 0.000412 * T * T
+        B = math.degrees(math.asin(math.sin(math.radians(incl)) * math.cos(math.radians(lat)) * math.sin(math.radians(lon - omega)) - math.cos(math.radians(incl)) * math.sin(math.radians(lat))))
+        l = planet_xyz[4]  # heliocentric longitude of Saturn
+        b = planet_xyz[5]  # heliocentric latitude
+        U1 = math.degrees(math.atan2(math.sin(math.radians(incl)) * math.sin(math.radians(b)) + math.cos(math.radians(incl)) * math.cos(math.radians(b)) * math.sin(math.radians(l - omega)), math.cos(math.radians(b)) * math.cos(math.radians(l - omega))))
+        U2 = math.degrees(math.atan2(math.sin(math.radians(incl)) * math.sin(math.radians(lat)) + math.cos(math.radians(incl)) * math.cos(math.radians(lat)) * math.sin(math.radians(lon - omega)), math.cos(math.radians(lat)) * math.cos(math.radians(lon - omega))))
+        dU = abs(U1 - U2)
+        mag += 0.044 * dU - 2.60 * math.sin(math.radians(abs(B))) + 1.25 * math.sin(math.radians(B)) * math.sin(math.radians(B))
+
+    return [altaz[0], altaz[1], altaz[2], ra, dec, lon, lat, k, r, dist, mag]
+
+def getGrahas(j, l, lat):
+    obs = {'longitude': l, 'latitude': lat}
+    grahas = [None] * 10
+    grahas_next = [None] * 9
+    speed = [None] * 9
+    gr = [None] * 9
+    grn = [None] * 9
+    day = 1000 * 60 * 60 * 24
+
+    for a in range(7):
+        gr[a] = PlanetAlt(a, j, obs)
+        if gr[a] is not None:
+            grahas[a] = gr[a][5]
+        grn[a] = PlanetAlt(a, j + 1, obs)
+        if grn[a] is not None:
+            grahas_next[a] = grn[a][5]
+        if grahas[a] is not None and grahas_next[a] is not None:
+            speed[a] = ((grahas_next[a] - grahas[a] + 360) % 360 / day
+                        if (grahas_next[a] - grahas[a]) < -300
+                        else (grahas_next[a] - grahas[a]) % 360 / day)
+
+    return grahas, grahas_next, speed
+
+def leap_gregorian(year):
+    return (year % 4) == 0 and not ((year % 100) == 0 and (year % 400) != 0)
+
+def fix360(v):
+    if v < 0:
+        v += 360
+    if v > 360:
+        v -= 360
+    return v
+
+def calcAyanamsa(t):
+    ln = ((933060 - 6962911 * t + 7.5 * t * t) / 3600.0) % 360.0
+    off = (259205536.0 * t + 2013816.0) / 3600.0
+    off = 17.23 * sind(ln) + 1.27 * sind(off) - (5025.64 + 1.11 * t) * t
+    off = (off - 80861.27) / 3600.0
+    ayanamsa = off
+    node = (ln + off + 360) % 360
+    return ayanamsa, node
+
+def calculateAscendant(date_time, j, latitude, longitude, timezone_offset):
+    hr = date_time.hour + date_time.minute / 60
+    tz = timezone_offset
+    f = hr + tz
+    t = (j - 2415020) / 36525
+    ayanamsa, node = calcAyanamsa(t)
+    ra = (((6.6460656 + 2400.0512617 * t + 2.581e-5 * t * t + f) * 15 - longitude) % 360) * d2r
+    ob = (23.452294 - 0.0130125 * t - 0.00000164 * t * t + 0.000000503 * t * t * t) * d2r
+
+    mc = math.atan2(math.tan(ra), math.cos(ob))
+    if mc < 0:
+        mc += math.pi
+    if math.sin(ra) < 0:
+        mc += math.pi
+    mc *= r2d
+
+    as_ = math.atan2(math.cos(ra), -math.sin(ra) * math.cos(ob) - math.tan(latitude * d2r) * math.sin(ob))
+    if as_ < 0:
+        as_ += math.pi
+    if math.cos(ra) < 0:
+        as_ += math.pi
+    as_ = fix360(as_ * r2d)
+
+    as_ = fix360(as_ + ayanamsa)
+    mc = fix360(mc + ayanamsa)
+
+    hs = [None] * 24
+    x = as_ - mc
+    if x < 0:
+        x += 360
+    x /= 6
+    y = 18
+    for i in range(7):
+        hs[y % 24] = mc + x * i
+        y += 1
+        if y > 24:
+            y = 0
+
+    x = mc - fix360(as_ + 180)
+    if x < 0:
+        x += 360
+    x /= 6
+    y = 12
+    for i in range(7):
+        hs[y] = fix360(as_ + 180 + x * i)
+        y += 1
+
+    for i in range(12):
+        hs[i] = fix360(hs[i + 12] + 180)
+
+    bhaava_madya = [
+        hs[0], hs[2], hs[4], hs[6], hs[8], hs[10],
+        hs[12], hs[14], hs[16], hs[18], hs[20], hs[22]
+    ]
+    bhaava_sandhi = [
+        hs[1], hs[3], hs[5], hs[7], hs[9], hs[11],
+        hs[13], hs[15], hs[17], hs[19], hs[21], hs[23]
+    ]
+
+    return as_, mc, bhaava_madya, bhaava_sandhi, ayanamsa, node
+
+def m2j(dob):
+    m = dob.month
+    d = dob.day
+    y = dob.year
+    sec = dob.second
+    min = dob.minute
+    hour = dob.hour
+
+    # Calculate Julian Day Number
+    julian_day = (GREGORIAN_EPOCH - 1) + \
+                 (365 * (y - 1)) + \
+                 math.floor((y - 1) / 4) + \
+                 -math.floor((y - 1) / 100) + \
+                 math.floor((y - 1) / 400) + \
+                 math.floor((((367 * m) - 362) / 12) + \
+                 (0 if m <= 2 else -1 if leap_gregorian(y) else -2) + \
+                 d) + \
+                 (math.floor(sec + 60 * (min + 60 * hour) + 0.5) / 86400.0)
+    
+    return julian_day
+
+def j2j(JulianDay):
+    j = int(JulianDay) + 1402
+    k = (j - 1) // 1461
+    l = j - 1461 * k
+    n = (l - 1) // 365 - l // 1461
+    i = l - 365 * n + 30
+    J = int(80 * i / 2447)
+    I2 = J // 11
+    day0 = i - int(2447 * J / 80)
+    month = J + 2 - 12 * I2
+    year = 4 * k + n + I2 - 4716
+    return day0, month, year
+
+def j2g(JulianDay):
+    a = JulianDay + 68569
+    b = int(a / 36524.25)
+    c = a - int(36524.25 * b + 0.75)
+    e = int((c + 1) / 365.2425)
+    f = c - int(365.25 * e) + 31
+    g = int(f / 30.59)
+    h = g // 11
+    day0 = math.floor(f - int(30.59 * g) + (JulianDay - int(JulianDay)))
+    month = math.floor(g - 12 * h + 2)
+    year = math.floor(100 * (b - 49) + e + h)
+    return day0, month, year
+
+def jd2md2(j):
+    if j < 2299239:
+        day0, month, year = j2j(j)
+    else:
+        day0, month, year = j2g(j)
+    hour = (j - int(j)) * 24
+    minute = (hour - int(hour)) * 60
+    second = (minute - int(minute)) * 60
+    return datetime(year, month, day0, int(hour), int(minute), int(second))
+
+def fra(t):
+    return t - floor(t)
+
+def tt(t, y):
+    if y == 0:
+        z = f"{t:02d}" if t < 10 else str(t)
+    else:
+        if t > 100:
+            z = str(t)
+        elif t > 10:
+            z = f"{t:02d}"
+        else:
+            z = f"{t:03d}"
+    return z
+w=["Ar","Ta","Ge","Ca","Le","Vi","Li","Sc","Sg","Cp","aq","Pi"]
+def todeg(t):
+    r = fra(t)
+    a = floor(t)
+    r2 = r * 60
+    return f"{tt(a % 30)} {w[floor(a / 30)]} {tt(floor(r2))}' {tt(floor(fra(r2) * 60))}\""
+
+def wrapT(ctx, t, x, y, mW, lH):
+    w = t.split('')
+    l = ''
+    for n in range(len(w)):
+        tL = l + w[n]
+        m = ctx.measureText(tL)
+        tW = m.width
+        if tW > mW and n > 0:
+            ctx.fillText(l, x, y)
+            l = w[n]
+            y += lH
+        else:
+            l = tL
+    ctx.fillText(l, x, y)
+
+def reddeg(d):
+    return (d + 360) % 360
+
+def getRasi(d):
+    return floor(reddeg(d) / 30)
+
+
+@app.route('/api/calculate_sun_moon', methods=['POST'])
+def calculate_sun_moon():
+    data = request.get_json()
+    name = data['name']
+    date_of_birth = data['date_of_birth']
+    time_of_birth = data['time_of_birth']
+    place_of_birth = data['place_of_birth']
+    latitude = float(data['latitude'])
+    longitude = float(data['longitude'])
+    timezone_offset = data['timezone_offset']
+    julian_date = data['julian_date']
+
+    dob = datetime.strptime(date_of_birth + ' ' + time_of_birth, '%Y-%m-%d %H:%M')
+    jday = julian_date
+    obs = {'latitude': latitude, 'longitude': longitude}
+
+    # Assuming calculateAscendant and getGrahas are defined somewhere
+    ascendant, mc, bhaava_madya, bhaava_sandhi, ayanamsa, node = calculateAscendant(dob, jday, latitude, longitude, timezone_offset)
+    
+    g, g_next, speed = getGrahas(jday, longitude, latitude)
+    
+    gr = [0] * 10
+    for i in range(9):
+        if g[i] is not None and ayanamsa is not None:
+            gr[i] = (float(g[i]) + float(ayanamsa) + 36000) % 360
+        else:
+            gr[i] = None
+    
+    if node is not None and ayanamsa is not None:
+        gr[7] = (float(node) + float(ayanamsa) + 36000) % 360
+        gr[8] = (float(node) + float(ayanamsa) + 180 + 36000) % 360
+        gr[9] = (float(node) + 36000) % 360
+    else:
+        gr[7] = None
+        gr[8] = None
+        gr[9] = None
+    
+    T = (((360 + gr[1] - gr[0]) % 360) / 12)
+    N = (gr[1] / (13 + 1 / 3))
+    Y = (((gr[1] + gr[0]) % 360) / (13 + 1 / 3))
+    K = (((360 + gr[1] - gr[0]) % 360) / 12) * 2
+
+    Ti = ["S.Prathama", "S.Dwitiya", "S.Tritiya", "S.Chaturthi", "S.Panchami", "S.Shashti", "S.Saptami", "S.Ashtami", "S.Navami", "S.Dasami", "S.Ekadashi", "S.Dwadasi", "S.Trayodasi", "S.Chaturdashi", "Poornima", "K.Prathama", "K.Dwitiya", "K.Tritiya", "K.Chaturthi", "K.Panchami", "K.Shashti", "K.Saptami", "K.Ashtami", "K.Navami", "K.Dasami", "K.Ekadashi", "K.Dwadasi", "K.Trayodasi", "K.Chaturdashi", "Amavasya"]
+    Na = ["Ashvini", "Bharani", "Kritika", "Rohini", "Mrigashira", "Ardra", "Punarvasu", "Pushya", "Ashlesha", "Magha", "P.Phalguni", "U.Phalguni", "Hasta", "Chitra", "Swati", "Vishakha", "Anuradha", "Jyeshtha", "Mula", "P.Ashadha", "U.Ashadha", "Shravan", "Dhanistha", "Shatabhishaj", "P.Bhadrapad", "U.Bhadrapad", "Revati"]
+    Yo = ["Vishkambha", "Priti", "Ayushman", "Saubhagya", "Shobhana", "Atiganda", "Sukarman", "Dhriti", "Shula", "Ganda", "Vriddhi", "Dhruva", "Vyaghata", "Harshana", "Vajra", "Siddhi", "Vyatipata", "Varigha", "Parigha", "Shiva", "Siddha", "Sadhya", "Shubha", "Shukla", "Brahma", "Mahendra", "Vaidhriti"]
+    Ka = ["Kimstug", "Bhava", "Bhaala", "Kaulava", "Taitula", "Garija", "Vanija", "Vishti", "Bhava", "Bhaalava", "Kaulava", "Taitula", "Garija", "Vanija", "Vishti", "Bhava", "Bhaalava", "Kaulava", "Taitula", "Garija", "Vanija", "Vishti", "Bhava", "Bhaalava", "Kaulava", "Taitula", "Garija", "Vanija", "Vishti", "Bhava", "Bhaalava", "Kaulava", "Taitula", "Garija", "Vanija", "Vishti", "Bhava", "Bhaalava", "Kaulava", "Taitula", "Garija", "Vanija", "Vishti", "Bhava", "Bhaalava", "Kaulava", "Taitula", "Garija", "Vanija", "Vishti", "Bhava", "Bhaalava", "Kaulava", "Taitula", "Garija", "Vanija", "Vishti", "Shakuni", "Chatushpada", "Naaga"]
+
+    tithi = Ti[int(T)]
+    karan = Ka[int(K)]
+    yog = Yo[int(Y)]
+    nakshatra = Na[int(N)]
+
+    gr_degrees = [todeg(deg) for deg in gr if deg is not None]
+
+    return jsonify({
+        'name': name,
+        'date_of_birth': date_of_birth,
+        'time_of_birth': time_of_birth,
+        'place_of_birth': place_of_birth,
+        'latitude': latitude,
+        'longitude': longitude,
+        'ayanamsa': ayanamsa,
+        'node': node,
+        'ascendant': ascendant,
+        'mc': mc,
+        'bhaava_madya': bhaava_madya,
+        'bhaava_sandhi': bhaava_sandhi,
+        'gr': gr,
+        'gr_degrees': gr_degrees,
+        'tithi': tithi,
+        'yog': yog,
+        'karan': karan,
+        'nakshatra': nakshatra
+    })
+
+def reddeg(d):
+    return (d + 360) % 360
+
+def getRasi(d):
+    return floor(reddeg(d) / 30)
+
+def fra(t):
+    return t - floor(t)
+
+def tt(t, y=0):
+    if y == 0:
+        z = f"{t:02d}" if t < 10 else str(t)
+    else:
+        if t > 100:
+            z = str(t)
+        elif t > 10:
+            z = f"{t:02d}"
+        else:
+            z = f"{t:03d}"
+    return z
+
+w = ["Ar", "Ta", "Ge", "Ca", "Le", "Vi", "Li", "Sc", "Sg", "Cp", "Aq", "Pi"]
+
+def todeg(t):
+    r = fra(t)
+    a = floor(t)
+    r2 = r * 60
+    return f"{tt(a % 30)} {w[floor(a / 30)]} {tt(floor(r2))}' {tt(floor(fra(r2) * 60))}\""
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', debug=True)
